@@ -13,14 +13,14 @@ export function FlighttrackerFrame({
   const sendLicense = useCallback(() => {
     frame.current?.contentWindow?.postMessage(
       { type: "flighttracker-license", user, organisation },
-      "https://handl08.github.io",
+      window.location.origin,
     );
   }, [user, organisation]);
 
   return (
     <iframe
       ref={frame}
-      src="https://handl08.github.io/flighttracker/"
+      src="/flighttracker-static/"
       title="Flighttracker Live-Radar"
       className="block h-[calc(100vh-82px)] min-h-[720px] w-full border-0"
       allow="geolocation"
