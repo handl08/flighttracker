@@ -5,6 +5,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -25,18 +26,50 @@ def bounded_number(query, name, default, minimum, maximum):
     return value
 
 
+LIVE_SOURCES = {
+    'adsb.fi': 'https://opendata.adsb.fi/api/v3/lat/{lat:.4f}/lon/{lon:.4f}/dist/{dist:g}',
+    'adsb.lol': 'https://api.adsb.lol/v2/point/{lat:.4f}/{lon:.4f}/{dist:g}',
+}
+
+
+def fetch_live_source(name, template, lat, lon, dist):
+    url = template.format(lat=lat, lon=lon, dist=dist)
+    request = urllib.request.Request(url, headers={'User-Agent': 'Flighttracker/1.0 (+https://tools.factjack.org/flighttracker)'})
+    with urllib.request.urlopen(request, timeout=12) as response:
+        data = json.loads(response.read())
+    return name, data.get('ac', [])
+
+
 def aircraft(lat, lon, dist):
     key = (round(lat, 4), round(lon, 4), round(dist, 1))
     with LOCK:
         cached = CACHE.get(key)
         if cached and time.time() - cached[0] < 4.5:
             return cached[1]
-    url = f'https://opendata.adsb.fi/api/v3/lat/{lat:.4f}/lon/{lon:.4f}/dist/{dist:g}'
-    request = urllib.request.Request(url, headers={'User-Agent': 'Flighttracker personal flight radar/1.0'})
-    with urllib.request.urlopen(request, timeout=12) as response:
-        payload = response.read()
-    data = json.loads(payload)
-    result = json.dumps({'ac': data.get('ac', []), 'total': data.get('total'), 'now': int(time.time())}, separators=(',', ':')).encode()
+    merged = {}
+    active_sources = []
+    with ThreadPoolExecutor(max_workers=len(LIVE_SOURCES)) as pool:
+        futures = [pool.submit(fetch_live_source, name, template, lat, lon, dist) for name, template in LIVE_SOURCES.items()]
+        for future in as_completed(futures):
+            try:
+                name, rows = future.result()
+                active_sources.append(name)
+                for row in rows:
+                    hex_code = str(row.get('hex') or '').lower().strip()
+                    if not hex_code:
+                        continue
+                    if hex_code not in merged:
+                        merged[hex_code] = dict(row)
+                        merged[hex_code]['_sources'] = [name]
+                    else:
+                        current = merged[hex_code]
+                        current['_sources'].append(name)
+                        for field, value in row.items():
+                            if current.get(field) in (None, '', '–') and value not in (None, ''):
+                                current[field] = value
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+                continue
+    result = json.dumps({'ac': list(merged.values()), 'total': len(merged), 'now': int(time.time()), 'sources': sorted(active_sources)}, separators=(',', ':')).encode()
     with LOCK:
         CACHE[key] = (time.time(), result)
         if len(CACHE) > 100:

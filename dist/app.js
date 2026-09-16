@@ -12,7 +12,7 @@ const SCHEDULE_FALLBACKS = [{
   route_points: [[36.2347265, 59.6397905], [35.982, 57.925], [35.664, 56.184], [35.312, 54.477], [34.948, 52.731], [34.624, 50.892], [34.3459, 47.1581]],
 }];
 const state = {
-  center: [48.2082, 16.3738], radius: 50, aircraft: [], selected: null,
+  radius: 250, aircraft: [], selected: null,
   tracks: new Map(), markers: new Map(), busy: false, historical: null, historyResults: [], historyNearest: false, profiles: new Map(), licensedUser: '', licensedOrg: '',
 };
 const $ = (selector) => document.querySelector(selector);
@@ -22,15 +22,17 @@ const els = {
   empty: $('#emptyDetail'), detail: $('#detail'),
 };
 
-const map = L.map('map', { zoomControl: false }).setView(state.center, 8);
+const map = L.map('map', { zoomControl: false, worldCopyJump: true, minZoom: 2 }).setView([48.2082, 16.3738], 5);
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 18, crossOrigin: true, attribution: '&copy; OpenStreetMap-Mitwirkende',
 }).addTo(map);
-const radarCircle = L.circle(state.center, { radius: nmToMeters(state.radius), color: '#6ee7ff', weight: 1, opacity: .5, fillColor: '#163d49', fillOpacity: .08 }).addTo(map);
 let routeLine = L.polyline([], { color: '#ffb547', weight: 3, opacity: .9 }).addTo(map);
 
-function nmToMeters(nm) { return nm * 1852; }
+function visibleRadiusNm() {
+  const center = map.getCenter(), corner = map.getBounds().getNorthEast();
+  return Math.max(25, Math.min(250, haversine({ lat: center.lat, lon: center.lng }, { lat: corner.lat, lon: corner.lng }) / 1.852));
+}
 function clean(value, fallback = '–') { return value === undefined || value === null || value === '' ? fallback : String(value).trim(); }
 function feet(value) { return typeof value === 'number' ? `${Math.round(value).toLocaleString('de-AT')} ft` : clean(value); }
 function knots(value) { return typeof value === 'number' ? `${Math.round(value)} kt` : '–'; }
@@ -167,13 +169,16 @@ async function loadAircraft(manual = false) {
   state.busy = true;
   if (manual) $('#refresh').textContent = '…';
   try {
-    const url = new URL(API); url.searchParams.set('lat', state.center[0]); url.searchParams.set('lon', state.center[1]); url.searchParams.set('dist', state.radius);
+    const center = map.getCenter(); state.radius = visibleRadiusNm();
+    const url = new URL(API); url.searchParams.set('lat', center.lat); url.searchParams.set('lon', center.lng); url.searchParams.set('dist', state.radius.toFixed(1));
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`Datenquelle antwortet mit ${response.status}`);
     const data = await response.json();
     state.aircraft = (data.ac || []).filter(ac => ac.hex).sort((a, b) => (a.dst ?? 9999) - (b.dst ?? 9999));
     state.aircraft.forEach(rememberTrack);
-    els.dot.classList.add('live'); els.connection.textContent = `Live · ${state.aircraft.length} Flugzeuge`;
+    const sources = data.sources || [];
+    els.dot.classList.add('live'); els.connection.textContent = `Live · ${state.aircraft.length} Flugobjekte · ${sources.length} Quellen`;
+    $('#sourceStatus').textContent = `${sources.join(' + ') || 'Keine Quelle erreichbar'} · ${Math.round(state.radius)} NM um Kartenmitte`;
     renderList(); updateMarkers(); renderDetail();
   } catch (error) {
     els.dot.classList.remove('live'); els.connection.textContent = 'Daten derzeit nicht erreichbar';
@@ -183,9 +188,8 @@ async function loadAircraft(manual = false) {
 
 function setRadar(lat, lon, radius) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) { showToast('Bitte gültige Koordinaten eingeben.'); return; }
-  state.center = [lat, lon]; state.radius = radius;
-  radarCircle.setLatLng(state.center).setRadius(nmToMeters(radius));
-  map.fitBounds(radarCircle.getBounds(), { padding: [20, 20] });
+  state.radius = radius;
+  map.setView([lat, lon], 7);
   loadAircraft(true);
 }
 
@@ -367,8 +371,7 @@ async function openHistoricalFlight(summary) {
   } catch (error) { showToast(error.message); }
 }
 
-$('#radarControls').addEventListener('submit', event => { event.preventDefault(); setRadar(Number($('#lat').value), Number($('#lon').value), Number($('#radius').value)); });
-$('#locate').addEventListener('click', () => navigator.geolocation ? navigator.geolocation.getCurrentPosition(position => { $('#lat').value = position.coords.latitude.toFixed(4); $('#lon').value = position.coords.longitude.toFixed(4); setRadar(position.coords.latitude, position.coords.longitude, Number($('#radius').value)); }, () => showToast('Standort konnte nicht abgerufen werden.')) : showToast('Standortfunktion wird nicht unterstützt.'));
+$('#locate').addEventListener('click', () => navigator.geolocation ? navigator.geolocation.getCurrentPosition(position => setRadar(position.coords.latitude, position.coords.longitude, 100), () => showToast('Standort konnte nicht abgerufen werden.')) : showToast('Standortfunktion wird nicht unterstützt.'));
 $('#refresh').addEventListener('click', () => loadAircraft(true));
 els.search.addEventListener('input', renderList);
 $('#follow').addEventListener('click', () => { const ac = currentAircraft(); if (ac?.lat && ac?.lon) map.setView([ac.lat, ac.lon], Math.max(map.getZoom(), 10)); });
@@ -381,7 +384,9 @@ window.addEventListener('message', event => {
   state.licensedOrg = String(event.data.organisation || '').slice(0, 80);
 });
 setInterval(() => $('#clock').textContent = new Date().toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), 1000);
-setInterval(loadAircraft, 5000);
+let mapRefreshTimer;
+map.on('moveend', () => { clearTimeout(mapRefreshTimer); mapRefreshTimer = setTimeout(() => loadAircraft(true), 350); });
+setInterval(loadAircraft, 8000);
 loadAircraft();
 
 if (document.modelContext?.registerTool) {
@@ -394,7 +399,6 @@ if (document.modelContext?.registerTool) {
     async execute(input) {
       const { latitude, longitude, radiusNm } = input || {};
       if (![latitude, longitude, radiusNm].every(Number.isFinite)) throw new Error('Ungültige Koordinaten oder ungültiger Radius');
-      $('#lat').value = latitude.toFixed(4); $('#lon').value = longitude.toFixed(4); $('#radius').value = String(radiusNm);
       setRadar(latitude, longitude, radiusNm);
       return { latitude, longitude, radiusNm };
     },
