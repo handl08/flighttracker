@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Persönlicher Live-Flugradar mit Streckenaufzeichnung und PDF-Export.">
+  <title>Flightracker</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23081219'/%3E%3Cpath d='M7 34h19L43 13l5 3-9 18h15l4 5-20 4-6 12-4-1 2-12H12z' fill='%236ee7ff'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="./app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="identity"><span class="radar-mark" aria-hidden="true"></span><div><strong>Flightracker</strong><span>Live Radar &amp; PDF Report</span></div></div>
+    <div class="connection"><i id="liveDot"></i><span id="connectionText">Daten werden geladen</span><time id="clock"></time></div>
+  </header>
+  <main>
+    <section class="workspace" aria-label="Flugradar">
+      <div class="map-wrap">
+        <div id="map" aria-label="Karte der Flugbewegungen"></div>
+        <div class="scanline" aria-hidden="true"></div>
+        <form id="radarControls" class="radar-controls">
+          <label>Breitengrad<input id="lat" type="number" step="0.0001" value="48.2082"></label>
+          <label>Längengrad<input id="lon" type="number" step="0.0001" value="16.3738"></label>
+          <label>Radius (NM)<input id="radius" type="number" min="1" max="250" value="50"></label>
+          <button type="submit">Radar setzen</button>
+          <button type="button" id="locate" class="secondary">Mein Standort</button>
+        </form>
+        <div class="map-stats"><span><b id="aircraftCount">–</b> Flugzeuge</span><span>Quelle: <a href="https://adsb.fi" target="_blank" rel="noreferrer">adsb.fi</a></span></div>
+      </div>
+      <aside class="traffic-panel">
+        <div class="panel-head"><div><span class="eyebrow">LIVE TRAFFIC</span><h1>Flugbewegungen</h1></div><button id="refresh" class="icon-button" title="Jetzt aktualisieren" aria-label="Jetzt aktualisieren">↻</button></div>
+        <label class="search"><span>⌕</span><input id="search" type="search" placeholder="Flug, Kennzeichen oder Modell"></label>
+        <div id="aircraftList" class="aircraft-list"><div class="loading">Warte auf aktuelle Positionsdaten …</div></div>
+      </aside>
+    </section>
+    <section class="detail-panel" aria-live="polite">
+      <div id="emptyDetail" class="empty-detail"><span class="plane-outline">✈</span><div><h2>Flugzeug auswählen</h2><p>Die Strecke wird ab der ersten Sichtung in diesem Browser aufgezeichnet.</p></div></div>
+      <div id="detail" class="detail" hidden>
+        <div class="detail-title"><span class="eyebrow">AUSGEWÄHLTES FLUGZEUG</span><h2 id="detailFlight">–</h2><p><span id="detailReg">–</span> · <span id="detailModel">–</span></p></div>
+        <dl class="metrics"><div><dt>Höhe</dt><dd id="detailAltitude">–</dd></div><div><dt>Geschwindigkeit</dt><dd id="detailSpeed">–</dd></div><div><dt>Kurs</dt><dd id="detailTrack">–</dd></div><div><dt>Distanz</dt><dd id="detailDistance">–</dd></div><div><dt>Aufzeichnung</dt><dd id="detailDuration">–</dd></div></dl>
+        <div class="report-actions"><button id="follow" class="secondary">Auf Karte verfolgen</button><button id="exportPdf">PDF-Bericht exportieren</button></div>
+      </div>
+    </section>
+  </main>
+  <footer>Positionsdaten können unvollständig oder verzögert sein. Nicht zur Navigation verwenden.</footer>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

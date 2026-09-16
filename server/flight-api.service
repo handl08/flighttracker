@@ -1,0 +1,13 @@
+[Unit]
+Description=Flightracker ADS-B API proxy
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/flight-api.py
+Restart=on-failure
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
