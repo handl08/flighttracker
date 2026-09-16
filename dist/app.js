@@ -13,7 +13,7 @@ const SCHEDULE_FALLBACKS = [{
 }];
 const state = {
   center: [48.2082, 16.3738], radius: 50, aircraft: [], selected: null,
-  tracks: new Map(), markers: new Map(), busy: false, historical: null, historyResults: [], profiles: new Map(),
+  tracks: new Map(), markers: new Map(), busy: false, historical: null, historyResults: [], profiles: new Map(), licensedUser: '', licensedOrg: '',
 };
 const $ = (selector) => document.querySelector(selector);
 const els = {
@@ -225,8 +225,8 @@ async function exportPdf() {
   } catch { drawRoutePdf(pdf, points, 15, 140, 180, 75, cyan, navy); }
   pdf.setTextColor(...gray); pdf.setFontSize(8);
   const source = ac.source_label ? 'Flugplandaten / öffentliche Ereignisberichte' : (ac.historical ? 'adsb.aero / adsb.lol' : 'adsb.fi');
-  const licensedUser = $('#licenseUser').value.trim();
-  pdf.text(`${licensedUser ? `User: ${licensedUser} · ` : ''}Provided by factjack.org`, 15, 282);
+  const license = [state.licensedUser, state.licensedOrg].filter(Boolean).join(' · ');
+  pdf.text(`${license ? `User: ${license} · ` : ''}Provided by factjack.org`, 15, 282);
   pdf.text(`Erstellt: ${new Date().toLocaleString('de-AT')} · Daten: ${source} · Nicht zur Navigation verwenden`, 15, 287);
   pdf.save(`Flighttracker-${flightName(ac).replace(/[^a-z0-9_-]+/gi, '-')}-${new Date().toISOString().slice(0, 10)}.pdf`);
   showToast('PDF-Bericht wurde erstellt.');
@@ -347,8 +347,11 @@ $('#follow').addEventListener('click', () => { const ac = currentAircraft(); if 
 $('#exportPdf').addEventListener('click', exportPdf);
 $('#historyForm').addEventListener('submit', searchHistory);
 setupHistoryDates();
-$('#licenseUser').value = localStorage.getItem('flighttrackerLicenseUser') || '';
-$('#licenseUser').addEventListener('change', event => localStorage.setItem('flighttrackerLicenseUser', event.target.value.trim()));
+window.addEventListener('message', event => {
+  if (event.origin !== 'https://tools.factjack.org' || event.data?.type !== 'flighttracker-license') return;
+  state.licensedUser = String(event.data.user || '').slice(0, 80);
+  state.licensedOrg = String(event.data.organisation || '').slice(0, 80);
+});
 setInterval(() => $('#clock').textContent = new Date().toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), 1000);
 setInterval(loadAircraft, 5000);
 loadAircraft();

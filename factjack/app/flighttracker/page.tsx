@@ -1,12 +1,21 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
+
+import { currentUser } from "@/lib/auth/auth-store";
+import { FlighttrackerFrame } from "./FlighttrackerFrame";
 
 export const metadata: Metadata = {
   title: "Flighttracker",
   description: "Live-Flugradar und PDF-Flugberichte im FactJack Tool Portal.",
 };
 
-export default function FlighttrackerPage() {
+export const dynamic = "force-dynamic";
+
+export default async function FlighttrackerPage() {
+  const user = await currentUser();
+  if (!user) redirect("/login");
+
   return (
     <main className="flex min-h-screen flex-col bg-[#10140f] text-white">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b-2 border-[#10140f] bg-[#e9ff18] px-5 py-4 text-[#10140f] sm:px-8">
@@ -32,11 +41,9 @@ export default function FlighttrackerPage() {
       </header>
 
       <section className="min-h-0 flex-1 bg-[#061017]">
-        <iframe
-          src="https://handl08.github.io/flighttracker/"
-          title="Flighttracker Live-Radar"
-          className="block h-[calc(100vh-82px)] min-h-[720px] w-full border-0"
-          allow="geolocation"
+        <FlighttrackerFrame
+          user={user.displayName}
+          organisation={user.mediaHouseName ?? "FactJack"}
         />
       </section>
     </main>
