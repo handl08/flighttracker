@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 import json
 import threading
 import time
@@ -44,6 +45,25 @@ def aircraft(lat, lon, dist):
     return result
 
 
+def aircraft_profile(registration):
+    if not registration or len(registration) > 16:
+        return b'{"photo":null}'
+    url = f'https://api.planespotters.net/pub/photos/reg/{registration}'
+    request = urllib.request.Request(url, headers={'User-Agent': 'Flighttracker/1.0 (+https://tools.factjack.org/flighttracker)'})
+    with urllib.request.urlopen(request, timeout=12) as response:
+        data = json.loads(response.read())
+    photo = (data.get('photos') or [None])[0]
+    if not photo:
+        return b'{"photo":null}'
+    image_url = (photo.get('thumbnail_large') or photo.get('thumbnail') or {}).get('src')
+    image_request = urllib.request.Request(image_url, headers={'User-Agent': 'Flighttracker/1.0 (+https://tools.factjack.org/flighttracker)'})
+    with urllib.request.urlopen(image_request, timeout=12) as response:
+        image = response.read()
+        mime = response.headers.get_content_type()
+    result = {'photo': {'data_url': f'data:{mime};base64,{base64.b64encode(image).decode()}', 'photographer': photo.get('photographer') or 'Unbekannt', 'link': photo.get('link')}}
+    return json.dumps(result, separators=(',', ':')).encode()
+
+
 class Handler(BaseHTTPRequestHandler):
     def reply(self, status, body, content_type='application/json'):
         origin = self.headers.get('Origin', '')
@@ -61,6 +81,13 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == '/health':
             self.reply(200, b'ok', 'text/plain')
+            return
+        if parsed.path == '/profile':
+            try:
+                query = parse_qs(parsed.query)
+                self.reply(200, aircraft_profile(query.get('reg', [''])[0].strip().upper()))
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+                self.reply(200, b'{"photo":null}')
             return
         if parsed.path != '/aircraft':
             self.reply(404, b'{"error":"Not found"}')

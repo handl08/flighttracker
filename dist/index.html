@@ -9,6 +9,7 @@
   <link rel="preconnect" href="https://unpkg.com">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="./app.css">
+  <link rel="stylesheet" href="./history.css">
 </head>
 <body>
   <header class="topbar">
@@ -41,13 +42,28 @@
         <div class="detail-title"><span class="eyebrow">AUSGEWÄHLTES FLUGZEUG</span><h2 id="detailFlight">–</h2><p><span id="detailReg">–</span> · <span id="detailModel">–</span></p></div>
         <dl class="metrics"><div><dt>Höhe</dt><dd id="detailAltitude">–</dd></div><div><dt>Geschwindigkeit</dt><dd id="detailSpeed">–</dd></div><div><dt>Kurs</dt><dd id="detailTrack">–</dd></div><div><dt>Distanz</dt><dd id="detailDistance">–</dd></div><div><dt>Aufzeichnung</dt><dd id="detailDuration">–</dd></div></dl>
         <div class="report-actions"><button id="follow" class="secondary">Auf Karte verfolgen</button><button id="exportPdf">PDF-Bericht exportieren</button></div>
+        <div id="aircraftProfile" class="aircraft-profile" hidden><img id="profilePhoto" alt="Foto des ausgewählten Flugzeugs"><div><span class="eyebrow">FLUGZEUGPROFIL</span><strong id="profileOperator">–</strong><p id="profileFacts">–</p><small id="profileCredit">–</small></div></div>
+        <label class="license-user">Lizenzierter User (optional)<input id="licenseUser" type="text" maxlength="80" placeholder="Name für den PDF-Fuß"></label>
       </div>
+    </section>
+    <section class="history-panel" aria-labelledby="historyTitle">
+      <div class="history-intro"><span class="eyebrow">HISTORISCHE FLÜGE</span><h2 id="historyTitle">Vergangene Route finden</h2><p>Suche nach Callsign oder Kennzeichen. Wenn keine ADS-B-Spur existiert, kennzeichnet Flighttracker eine verfügbare Flugplanroute eindeutig.</p></div>
+      <form id="historyForm" class="history-form">
+        <label>Suchart<select id="historyType"><option value="callsign">Flug / Callsign</option><option value="registration">Kennzeichen</option></select></label>
+        <label>Suchbegriff<input id="historyQuery" type="text" maxlength="16" required placeholder="z. B. AUA1083 oder OE-LBD"></label>
+        <label>Von<input id="historyFrom" type="date" required></label>
+        <label>Bis<input id="historyTo" type="date" required></label>
+        <button type="submit">Historische Flüge suchen</button>
+      </form>
+      <div class="history-meta"><span id="historyStatus">Archiv verfügbar ab 2. Jänner 2025.</span><a href="https://adsb.aero" target="_blank" rel="noreferrer">Historische Daten: adsb.aero / adsb.lol</a></div>
+      <div id="historyResults" class="history-results"></div>
     </section>
   </main>
   <footer>Positionsdaten können unvollständig oder verzögert sein. Nicht zur Navigation verwenden.</footer>
   <div id="toast" role="status" aria-live="polite"></div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+  <script src="https://unpkg.com/leaflet-image@0.4.0/leaflet-image.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

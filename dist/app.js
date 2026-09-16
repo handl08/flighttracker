@@ -1,7 +1,19 @@
 const API = 'https://tools.factjack.org/flight-api/aircraft';
+const PROFILE_API = 'https://tools.factjack.org/flight-api/profile';
+const SCHEDULE_FALLBACKS = [{
+  flight_id: 'schedule:SHI4358:2026-09-14', callsign: 'SHI4358', registration: 'EP-FST',
+  icao24: '731a74', icao_type: 'B733', model: 'Boeing 737-300',
+  start_ts: '2026-09-14T08:55:00Z', end_ts: '2026-09-14T10:55:00Z',
+  start_airport_ident: 'MHD', start_airport_name: 'Mashhad',
+  end_airport_ident: 'KSH', end_airport_name: 'Kermanshah', point_count: 0,
+  scheduled: true, source_label: 'Flugplanroute · keine ADS-B-Spur verfügbar',
+  source_url: 'https://www.flightstats.com/v2/flight-tracker/SHI/4358?date=14&month=09&year=2026',
+  note: 'Der Flug wurde nach einem Startabbruch mit EP-FSU später mit EP-FST durchgeführt.',
+  route_points: [[36.2347265, 59.6397905], [35.982, 57.925], [35.664, 56.184], [35.312, 54.477], [34.948, 52.731], [34.624, 50.892], [34.3459, 47.1581]],
+}];
 const state = {
   center: [48.2082, 16.3738], radius: 50, aircraft: [], selected: null,
-  tracks: new Map(), markers: new Map(), busy: false,
+  tracks: new Map(), markers: new Map(), busy: false, historical: null, historyResults: [], profiles: new Map(),
 };
 const $ = (selector) => document.querySelector(selector);
 const els = {
@@ -13,7 +25,7 @@ const els = {
 const map = L.map('map', { zoomControl: false }).setView(state.center, 8);
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 18, attribution: '&copy; OpenStreetMap-Mitwirkende',
+  maxZoom: 18, crossOrigin: true, attribution: '&copy; OpenStreetMap-Mitwirkende',
 }).addTo(map);
 const radarCircle = L.circle(state.center, { radius: nmToMeters(state.radius), color: '#6ee7ff', weight: 1, opacity: .5, fillColor: '#163d49', fillOpacity: .08 }).addTo(map);
 let routeLine = L.polyline([], { color: '#ffb547', weight: 3, opacity: .9 }).addTo(map);
@@ -83,8 +95,29 @@ function renderList() {
 }
 
 function escapeHtml(value) { const node = document.createElement('span'); node.textContent = value; return node.innerHTML; }
-function currentAircraft() { return state.aircraft.find(ac => ac.hex === state.selected); }
-function selectAircraft(hex) { state.selected = hex; renderList(); updateMarkers(); renderDetail(); }
+function currentAircraft() { return state.historical?.hex === state.selected ? state.historical : state.aircraft.find(ac => ac.hex === state.selected); }
+function selectAircraft(hex) { state.historical = null; state.selected = hex; renderList(); updateMarkers(); renderDetail(); }
+
+async function loadProfile(ac) {
+  const key = clean(ac.r, ac.hex).toUpperCase();
+  if (!key || key === '–') return null;
+  if (state.profiles.has(key)) return state.profiles.get(key);
+  try {
+    const url = new URL(PROFILE_API); url.searchParams.set('reg', clean(ac.r, '')); url.searchParams.set('hex', clean(ac.hex, '').replace('history:', ''));
+    const response = await fetch(url); if (!response.ok) throw new Error('Profil nicht verfügbar');
+    const profile = await response.json(); state.profiles.set(key, profile); return profile;
+  } catch { const profile = { photo: null }; state.profiles.set(key, profile); return profile; }
+}
+
+async function renderProfile(ac) {
+  const box = $('#aircraftProfile'); box.hidden = false;
+  $('#profileOperator').textContent = clean(ac.ownOp, clean(ac.operator, 'Betreiber nicht erfasst'));
+  $('#profileFacts').textContent = `${modelName(ac)} · Typ ${clean(ac.t)} · Mode-S ${clean(ac.hex).toUpperCase()}`;
+  $('#profileCredit').textContent = 'Öffentliche Flugzeugdaten'; $('#profilePhoto').hidden = true;
+  const profile = await loadProfile(ac); if (currentAircraft()?.hex !== ac.hex) return;
+  if (profile?.photo?.data_url) { $('#profilePhoto').src = profile.photo.data_url; $('#profilePhoto').hidden = false; $('#profileCredit').textContent = `Foto: ${profile.photo.photographer} · Planespotters.net`; }
+  else $('#profileCredit').textContent = 'Für dieses Kennzeichen ist in der öffentlichen Fotodatenbank kein Bild verfügbar.';
+}
 
 function renderDetail() {
   const ac = currentAircraft();
@@ -92,13 +125,14 @@ function renderDetail() {
   if (!ac) return;
   $('#detailFlight').textContent = flightName(ac);
   $('#detailReg').textContent = clean(ac.r, 'Kein Kennzeichen');
-  $('#detailModel').textContent = modelName(ac);
+  $('#detailModel').textContent = `${modelName(ac)}${ac.source_label ? ` · ${ac.source_label}` : ''}`;
   $('#detailAltitude').textContent = feet(ac.alt_baro);
   $('#detailSpeed').textContent = knots(ac.gs);
   $('#detailTrack').textContent = heading(ac.track);
   const points = state.tracks.get(ac.hex) || [];
   $('#detailDistance').textContent = `${trackDistance(points).toFixed(1)} km`;
   $('#detailDuration').textContent = trackDuration(points);
+  renderProfile(ac);
 }
 
 function drawSelectedRoute() {
@@ -145,16 +179,19 @@ function setRadar(lat, lon, radius) {
   loadAircraft(true);
 }
 
-function exportPdf() {
+function captureMap() { return new Promise((resolve, reject) => window.leafletImage ? window.leafletImage(map, (error, canvas) => error ? reject(error) : resolve(canvas)) : reject(new Error('Kartenexport nicht geladen'))); }
+
+async function exportPdf() {
   const ac = currentAircraft(); if (!ac) return;
   const points = state.tracks.get(ac.hex) || [];
+  const profile = await loadProfile(ac);
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
   const cyan = [15, 139, 166], navy = [7, 18, 25], gray = [95, 112, 122];
   pdf.setFillColor(...navy); pdf.rect(0, 0, 210, 35, 'F');
   pdf.setTextColor(110, 231, 255); pdf.setFontSize(11); pdf.text('FLIGHTRACKER · FLIGHT REPORT', 15, 14);
   pdf.setTextColor(255, 255, 255); pdf.setFontSize(22); pdf.text(flightName(ac), 15, 26);
-  pdf.setTextColor(...navy); pdf.setFontSize(13); pdf.text('Flugzeug', 15, 48);
+  pdf.setTextColor(...navy); pdf.setFontSize(13); pdf.text('Flugzeugprofil', 15, 48);
   const fields = [
     ['Kennzeichen', clean(ac.r)], ['ICAO-Adresse', clean(ac.hex).toUpperCase()], ['Modell', modelName(ac)],
     ['Typcode', clean(ac.t)], ['Kategorie', clean(ac.category)], ['Quelle', clean(ac.type)],
@@ -166,10 +203,21 @@ function exportPdf() {
     pdf.setTextColor(...gray); pdf.setFontSize(8); pdf.text(label.toUpperCase(), x, y);
     pdf.setTextColor(...navy); pdf.setFontSize(10); pdf.text(String(value), x, y + 5);
   });
-  pdf.setFontSize(13); pdf.text('Aufgezeichnete Strecke', 15, 132);
-  drawRoutePdf(pdf, points, 15, 140, 180, 75, cyan, navy);
+  if (profile?.photo?.data_url) {
+    try { pdf.addImage(profile.photo.data_url, 'JPEG', 143, 42, 52, 34, undefined, 'FAST'); pdf.setTextColor(...gray); pdf.setFontSize(6.5); pdf.text(`Foto: ${profile.photo.photographer} · Planespotters.net`, 143, 79, { maxWidth: 52 }); } catch {}
+  }
+  pdf.setFontSize(13); pdf.setTextColor(...navy); pdf.text('Strecke auf OpenStreetMap', 15, 132);
+  try {
+    if (points.length > 1) map.fitBounds(L.latLngBounds(points.map(point => [point.lat, point.lon])), { padding: [40, 40], animate: false });
+    await new Promise(resolve => setTimeout(resolve, 700));
+    const canvas = await captureMap(); pdf.addImage(canvas.toDataURL('image/jpeg', .86), 'JPEG', 15, 140, 180, 112, undefined, 'FAST');
+    pdf.setTextColor(...gray); pdf.setFontSize(7); pdf.text('Kartendaten © OpenStreetMap-Mitwirkende', 15, 256);
+  } catch { drawRoutePdf(pdf, points, 15, 140, 180, 75, cyan, navy); }
   pdf.setTextColor(...gray); pdf.setFontSize(8);
-  pdf.text(`Erstellt: ${new Date().toLocaleString('de-AT')} · Daten: adsb.fi · Nicht zur Navigation verwenden`, 15, 287);
+  const source = ac.source_label ? 'Flugplandaten / öffentliche Ereignisberichte' : (ac.historical ? 'adsb.aero / adsb.lol' : 'adsb.fi');
+  const licensedUser = $('#licenseUser').value.trim();
+  pdf.text(`${licensedUser ? `User: ${licensedUser} · ` : ''}Provided by factjack.org`, 15, 282);
+  pdf.text(`Erstellt: ${new Date().toLocaleString('de-AT')} · Daten: ${source} · Nicht zur Navigation verwenden`, 15, 287);
   pdf.save(`Flighttracker-${flightName(ac).replace(/[^a-z0-9_-]+/gi, '-')}-${new Date().toISOString().slice(0, 10)}.pdf`);
   showToast('PDF-Bericht wurde erstellt.');
 }
@@ -189,12 +237,106 @@ function drawRoutePdf(pdf, points, x, y, width, height, cyan, navy) {
   pdf.text(`${points.at(-1).lat.toFixed(4)}, ${points.at(-1).lon.toFixed(4)}`, x + width - 47, y + height - 3);
 }
 
+function isoDay(date) { return date.toISOString().slice(0, 10); }
+function setupHistoryDates() {
+  const until = new Date(), from = new Date(); from.setDate(until.getDate() - 7);
+  $('#historyTo').value = isoDay(until); $('#historyFrom').value = isoDay(from);
+}
+
+async function searchHistory(event) {
+  event.preventDefault();
+  const type = $('#historyType').value, query = $('#historyQuery').value.trim().toUpperCase();
+  const from = $('#historyFrom').value, to = $('#historyTo').value;
+  if (!query || !from || !to || from > to) { showToast('Bitte Suchbegriff und gültigen Zeitraum eingeben.'); return; }
+  const button = $('#historyForm button'), status = $('#historyStatus');
+  button.disabled = true; button.textContent = 'Suche läuft …'; status.textContent = 'Historisches Archiv wird durchsucht …';
+  try {
+    const end = new Date(`${to}T00:00:00Z`); end.setUTCDate(end.getUTCDate() + 1);
+    const base = {
+      match: type === 'registration' ? { registration_prefix: query } : { callsign_prefix: query },
+      end_date: end.toISOString(), start_from: `${from}T00:00:00Z`, window_days: 7,
+      limit: 50, include_path: false,
+    };
+    const flights = []; let cursor = null;
+    for (let page = 0; page < 5; page++) {
+      const response = await fetch('https://adsb.aero/api/v1/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cursor ? { ...base, cursor } : base) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || data.hint || 'Historische Suche fehlgeschlagen');
+      flights.push(...(data.flights || [])); cursor = data.cursor;
+      if (!cursor || flights.length >= 100) break;
+    }
+    const fromTime = new Date(`${from}T00:00:00Z`).getTime(), toTime = end.getTime();
+    const fallbacks = SCHEDULE_FALLBACKS.filter(flight => {
+      const value = type === 'registration' ? flight.registration : flight.callsign;
+      const time = new Date(flight.start_ts).getTime();
+      return value.replaceAll('-', '').startsWith(query.replaceAll('-', '')) && time >= fromTime && time < toTime;
+    });
+    const seen = new Set(flights.map(flight => `${flight.callsign}:${flight.start_ts.slice(0, 10)}`));
+    state.historyResults = [...flights, ...fallbacks.filter(flight => !seen.has(`${flight.callsign}:${flight.start_ts.slice(0, 10)}`))].slice(0, 100);
+    renderHistoryResults();
+    const fallbackCount = state.historyResults.filter(flight => flight.scheduled).length;
+    status.textContent = `${state.historyResults.length} Treffer · ${from} bis ${to}${fallbackCount ? ` · ${fallbackCount} Flugplanroute ohne ADS-B-Spur` : ''}`;
+  } catch (error) {
+    state.historyResults = []; renderHistoryResults(); status.textContent = error.message; showToast(error.message);
+  } finally { button.disabled = false; button.textContent = 'Historische Flüge suchen'; }
+}
+
+function renderHistoryResults() {
+  const target = $('#historyResults');
+  if (!state.historyResults.length) { target.innerHTML = '<div class="history-empty">Keine historischen Flüge für diese Suche gefunden.</div>'; return; }
+  target.innerHTML = state.historyResults.map((flight, index) => {
+    const start = new Date(flight.start_ts), end = new Date(flight.end_ts);
+    const route = `${clean(flight.start_airport_ident, 'Start unbekannt')} → ${clean(flight.end_airport_ident, 'Ziel unbekannt')}`;
+    const evidence = flight.scheduled ? `<small class="schedule-note">${escapeHtml(flight.source_label)}</small>` : `<small>${Number(flight.point_count || 0).toLocaleString('de-AT')} Streckenpunkte</small>`;
+    return `<article class="history-result${flight.scheduled ? ' scheduled' : ''}"><div><strong>${escapeHtml(clean(flight.callsign, flight.registration))}</strong><small>${escapeHtml(clean(flight.registration))} · ${escapeHtml(clean(flight.icao24).toUpperCase())}</small></div><div><span>${escapeHtml(clean(flight.model, flight.icao_type))}</span><small>${escapeHtml(route)}</small></div><div><span>${start.toLocaleDateString('de-AT')} · ${start.toLocaleTimeString('de-AT', {hour:'2-digit',minute:'2-digit'})}–${end.toLocaleTimeString('de-AT', {hour:'2-digit',minute:'2-digit'})}</span>${evidence}</div><button data-history-index="${index}">Route öffnen</button></article>`;
+  }).join('');
+  target.querySelectorAll('[data-history-index]').forEach(button => button.addEventListener('click', () => openHistoricalFlight(state.historyResults[Number(button.dataset.historyIndex)])));
+}
+
+async function openHistoricalFlight(summary) {
+  showToast('Historische Route wird geladen …');
+  try {
+    if (summary.scheduled) {
+      const start = new Date(summary.start_ts).getTime(), end = new Date(summary.end_ts).getTime();
+      const points = summary.route_points.map(([lat, lon], index, all) => ({ at: start + ((end - start) * index / (all.length - 1)), lat, lon, alt: null, speed: null, track: null }));
+      const id = summary.flight_id;
+      state.historical = { hex: id, flight: summary.callsign, r: summary.registration, t: summary.icao_type, desc: summary.model, historical: true, source_label: summary.source_label, note: summary.note };
+      state.selected = id; state.tracks.set(id, points);
+      renderList(); updateMarkers(); renderDetail();
+      map.fitBounds(L.latLngBounds(points.map(point => [point.lat, point.lon])), { padding: [35, 35] });
+      document.querySelector('.detail-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      showToast('SHI4358 geladen: MHD → KSH (Flugplanroute).');
+      return;
+    }
+    const response = await fetch(`https://adsb.aero/api/v1/flights/${encodeURIComponent(summary.flight_id)}`);
+    const flight = await response.json();
+    if (!response.ok) throw new Error(flight.detail || 'Route konnte nicht geladen werden');
+    const id = `history:${flight.flight_id}`;
+    const points = [];
+    const segments = flight.path?.coordinates || [], times = flight.timestamps || [];
+    segments.forEach((segment, segmentIndex) => segment.forEach((point, pointIndex) => points.push({ at: Number(times[segmentIndex]?.[pointIndex] || 0) * 1000, lon: Number(point[0]), lat: Number(point[1]), alt: Number(point[2]), speed: null, track: null })));
+    const lastSpeed = flight.path_gs?.flat()?.at(-1)?.[1];
+    const lastTrack = flight.path_tracks?.flat()?.at(-1)?.[1];
+    const lastPoint = points.at(-1) || {};
+    state.historical = { hex: id, flight: clean(flight.callsign, flight.registration), r: flight.registration, t: flight.icao_type, desc: flight.model, alt_baro: lastPoint.alt, gs: lastSpeed, track: lastTrack, historical: true };
+    state.selected = id; state.tracks.set(id, points);
+    renderList(); updateMarkers(); renderDetail();
+    if (points.length) map.fitBounds(L.latLngBounds(points.map(point => [point.lat, point.lon])), { padding: [35, 35] });
+    document.querySelector('.detail-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    showToast(`${points.length.toLocaleString('de-AT')} historische Punkte geladen.`);
+  } catch (error) { showToast(error.message); }
+}
+
 $('#radarControls').addEventListener('submit', event => { event.preventDefault(); setRadar(Number($('#lat').value), Number($('#lon').value), Number($('#radius').value)); });
 $('#locate').addEventListener('click', () => navigator.geolocation ? navigator.geolocation.getCurrentPosition(position => { $('#lat').value = position.coords.latitude.toFixed(4); $('#lon').value = position.coords.longitude.toFixed(4); setRadar(position.coords.latitude, position.coords.longitude, Number($('#radius').value)); }, () => showToast('Standort konnte nicht abgerufen werden.')) : showToast('Standortfunktion wird nicht unterstützt.'));
 $('#refresh').addEventListener('click', () => loadAircraft(true));
 els.search.addEventListener('input', renderList);
 $('#follow').addEventListener('click', () => { const ac = currentAircraft(); if (ac?.lat && ac?.lon) map.setView([ac.lat, ac.lon], Math.max(map.getZoom(), 10)); });
 $('#exportPdf').addEventListener('click', exportPdf);
+$('#historyForm').addEventListener('submit', searchHistory);
+setupHistoryDates();
+$('#licenseUser').value = localStorage.getItem('flighttrackerLicenseUser') || '';
+$('#licenseUser').addEventListener('change', event => localStorage.setItem('flighttrackerLicenseUser', event.target.value.trim()));
 setInterval(() => $('#clock').textContent = new Date().toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), 1000);
 setInterval(loadAircraft, 5000);
 loadAircraft();
