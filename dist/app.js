@@ -249,9 +249,15 @@ async function searchHistory(event) {
   const from = $('#historyFrom').value, to = $('#historyTo').value;
   if (!query || !from || !to || from > to) { showToast('Bitte Suchbegriff und gültigen Zeitraum eingeben.'); return; }
   const button = $('#historyForm button'), status = $('#historyStatus');
+  const end = new Date(`${to}T00:00:00Z`); end.setUTCDate(end.getUTCDate() + 1);
+  const fromTime = new Date(`${from}T00:00:00Z`).getTime(), toTime = end.getTime();
+  const fallbacks = SCHEDULE_FALLBACKS.filter(flight => {
+    const value = type === 'registration' ? flight.registration : flight.callsign;
+    const time = new Date(flight.start_ts).getTime();
+    return value.replaceAll('-', '').startsWith(query.replaceAll('-', '')) && time >= fromTime && time < toTime;
+  });
   button.disabled = true; button.textContent = 'Suche läuft …'; status.textContent = 'Historisches Archiv wird durchsucht …';
   try {
-    const end = new Date(`${to}T00:00:00Z`); end.setUTCDate(end.getUTCDate() + 1);
     const base = {
       match: type === 'registration' ? { registration_prefix: query } : { callsign_prefix: query },
       end_date: end.toISOString(), start_from: `${from}T00:00:00Z`, window_days: 7,
@@ -265,19 +271,15 @@ async function searchHistory(event) {
       flights.push(...(data.flights || [])); cursor = data.cursor;
       if (!cursor || flights.length >= 100) break;
     }
-    const fromTime = new Date(`${from}T00:00:00Z`).getTime(), toTime = end.getTime();
-    const fallbacks = SCHEDULE_FALLBACKS.filter(flight => {
-      const value = type === 'registration' ? flight.registration : flight.callsign;
-      const time = new Date(flight.start_ts).getTime();
-      return value.replaceAll('-', '').startsWith(query.replaceAll('-', '')) && time >= fromTime && time < toTime;
-    });
     const seen = new Set(flights.map(flight => `${flight.callsign}:${flight.start_ts.slice(0, 10)}`));
     state.historyResults = [...flights, ...fallbacks.filter(flight => !seen.has(`${flight.callsign}:${flight.start_ts.slice(0, 10)}`))].slice(0, 100);
     renderHistoryResults();
     const fallbackCount = state.historyResults.filter(flight => flight.scheduled).length;
     status.textContent = `${state.historyResults.length} Treffer · ${from} bis ${to}${fallbackCount ? ` · ${fallbackCount} Flugplanroute ohne ADS-B-Spur` : ''}`;
   } catch (error) {
-    state.historyResults = []; renderHistoryResults(); status.textContent = error.message; showToast(error.message);
+    state.historyResults = fallbacks; renderHistoryResults();
+    status.textContent = fallbacks.length ? `${fallbacks.length} Flugplanroute · ADS-B-Archiv derzeit nicht erreichbar` : error.message;
+    showToast(fallbacks.length ? 'Flugplanroute geladen; ADS-B-Archiv nicht erreichbar.' : error.message);
   } finally { button.disabled = false; button.textContent = 'Historische Flüge suchen'; }
 }
 
