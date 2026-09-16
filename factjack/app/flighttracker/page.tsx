@@ -2,11 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Flightracker",
+  title: "Flighttracker",
   description: "Live-Flugradar und PDF-Flugberichte im FactJack Tool Portal.",
 };
 
-export default function FlightrackerPage() {
+export default function FlighttrackerPage() {
   return (
     <main className="flex min-h-screen flex-col bg-[#10140f] text-white">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b-2 border-[#10140f] bg-[#e9ff18] px-5 py-4 text-[#10140f] sm:px-8">
@@ -22,7 +22,7 @@ export default function FlightrackerPage() {
               FactJack Live Intelligence
             </div>
             <h1 className="text-2xl font-black uppercase leading-none sm:text-3xl">
-              Flightracker
+              Flighttracker
             </h1>
           </div>
         </div>
@@ -33,8 +33,8 @@ export default function FlightrackerPage() {
 
       <section className="min-h-0 flex-1 bg-[#061017]">
         <iframe
-          src="https://handl08.github.io/flightracker/"
-          title="Flightracker Live-Radar"
+          src="https://handl08.github.io/flighttracker/"
+          title="Flighttracker Live-Radar"
           className="block h-[calc(100vh-82px)] min-h-[720px] w-full border-0"
           allow="geolocation"
         />

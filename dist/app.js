@@ -170,7 +170,7 @@ function exportPdf() {
   drawRoutePdf(pdf, points, 15, 140, 180, 75, cyan, navy);
   pdf.setTextColor(...gray); pdf.setFontSize(8);
   pdf.text(`Erstellt: ${new Date().toLocaleString('de-AT')} · Daten: adsb.fi · Nicht zur Navigation verwenden`, 15, 287);
-  pdf.save(`Flightracker-${flightName(ac).replace(/[^a-z0-9_-]+/gi, '-')}-${new Date().toISOString().slice(0, 10)}.pdf`);
+  pdf.save(`Flighttracker-${flightName(ac).replace(/[^a-z0-9_-]+/gi, '-')}-${new Date().toISOString().slice(0, 10)}.pdf`);
   showToast('PDF-Bericht wurde erstellt.');
 }
 
@@ -203,7 +203,7 @@ if (document.modelContext?.registerTool) {
   const lifecycle = new AbortController();
   Promise.resolve(document.modelContext.registerTool({
     name: 'set_radar_area', title: 'Radargebiet einstellen',
-    description: 'Setzt Mittelpunkt und Radius des sichtbaren Flightracker-Radars und lädt aktuelle Flugzeuge.',
+    description: 'Setzt Mittelpunkt und Radius des sichtbaren Flighttracker-Radars und lädt aktuelle Flugzeuge.',
     inputSchema: { type: 'object', properties: { latitude: { type: 'number', minimum: -90, maximum: 90 }, longitude: { type: 'number', minimum: -180, maximum: 180 }, radiusNm: { type: 'number', minimum: 1, maximum: 250 } }, required: ['latitude', 'longitude', 'radiusNm'], additionalProperties: false },
     annotations: { readOnlyHint: false, untrustedContentHint: false },
     async execute(input) {
@@ -216,7 +216,7 @@ if (document.modelContext?.registerTool) {
   }, { signal: lifecycle.signal })).catch(() => {});
   Promise.resolve(document.modelContext.registerTool({
     name: 'read_visible_aircraft', title: 'Sichtbare Flugzeuge lesen',
-    description: 'Liest die aktuell im Flightracker sichtbaren Flugzeuge mit Flug, Kennzeichen, Modell, Höhe und Geschwindigkeit.',
+    description: 'Liest die aktuell im Flighttracker sichtbaren Flugzeuge mit Flug, Kennzeichen, Modell, Höhe und Geschwindigkeit.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, untrustedContentHint: true },
     execute() { return state.aircraft.map(ac => ({ flight: flightName(ac), registration: clean(ac.r), model: modelName(ac), altitudeFt: ac.alt_baro ?? null, speedKt: ac.gs ?? null, heading: ac.track ?? null })); },

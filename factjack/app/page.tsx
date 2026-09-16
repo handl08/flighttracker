@@ -25,8 +25,8 @@ export default async function ToolsPortalPage() {
     })),
     {
       id: "flightracker",
-      name: "Flightracker",
-      href: "/flightracker",
+      name: "Flighttracker",
+      href: "/flighttracker",
       status: "active",
       description:
         "Live-Flugradar mit Flugzeugmodellen, aufgezeichneter Strecke und exportierbarem PDF-Bericht.",

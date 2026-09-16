@@ -1,4 +1,4 @@
-# Flightracker
+# Flighttracker
 
 Persönlicher Live-Flugradar mit Flugzeugdetails, lokaler Streckenaufzeichnung und PDF-Export. Die Anwendung nutzt die kostenlose [adsb.fi Open Data API](https://github.com/adsbfi/opendata) für den privaten, nichtkommerziellen Gebrauch.
 

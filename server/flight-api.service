@@ -1,5 +1,5 @@
 [Unit]
-Description=Flightracker ADS-B API proxy
+Description=Flighttracker ADS-B API proxy
 After=network-online.target
 
 [Service]

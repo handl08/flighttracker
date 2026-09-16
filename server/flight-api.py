@@ -31,7 +31,7 @@ def aircraft(lat, lon, dist):
         if cached and time.time() - cached[0] < 4.5:
             return cached[1]
     url = f'https://opendata.adsb.fi/api/v3/lat/{lat:.4f}/lon/{lon:.4f}/dist/{dist:g}'
-    request = urllib.request.Request(url, headers={'User-Agent': 'Flightracker personal flight radar/1.0'})
+    request = urllib.request.Request(url, headers={'User-Agent': 'Flighttracker personal flight radar/1.0'})
     with urllib.request.urlopen(request, timeout=12) as response:
         payload = response.read()
     data = json.loads(payload)
