@@ -13,7 +13,7 @@ const SCHEDULE_FALLBACKS = [{
 }];
 const state = {
   center: [48.2082, 16.3738], radius: 50, aircraft: [], selected: null,
-  tracks: new Map(), markers: new Map(), busy: false, historical: null, historyResults: [], profiles: new Map(), licensedUser: '', licensedOrg: '',
+  tracks: new Map(), markers: new Map(), busy: false, historical: null, historyResults: [], historyNearest: false, profiles: new Map(), licensedUser: '', licensedOrg: '',
 };
 const $ = (selector) => document.querySelector(selector);
 const els = {
@@ -193,6 +193,7 @@ function captureMap() { return new Promise((resolve, reject) => window.leafletIm
 
 async function exportPdf() {
   const ac = currentAircraft(); if (!ac) return;
+  showToast('PDF-Bericht wird erzeugt …');
   const points = state.tracks.get(ac.hex) || [];
   const profile = await loadProfile(ac);
   const { jsPDF } = window.jspdf;
@@ -220,7 +221,10 @@ async function exportPdf() {
   try {
     if (points.length > 1) map.fitBounds(L.latLngBounds(points.map(point => [point.lat, point.lon])), { padding: [40, 40], animate: false });
     await new Promise(resolve => setTimeout(resolve, 700));
-    const canvas = await captureMap(); pdf.addImage(canvas.toDataURL('image/jpeg', .86), 'JPEG', 15, 140, 180, 112, undefined, 'FAST');
+    const canvas = await Promise.race([
+      captureMap(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Kartenexport-Zeitlimit')), 5000)),
+    ]); pdf.addImage(canvas.toDataURL('image/jpeg', .86), 'JPEG', 15, 140, 180, 112, undefined, 'FAST');
     pdf.setTextColor(...gray); pdf.setFontSize(7); pdf.text('Kartendaten © OpenStreetMap-Mitwirkende', 15, 256);
   } catch { drawRoutePdf(pdf, points, 15, 140, 180, 75, cyan, navy); }
   pdf.setTextColor(...gray); pdf.setFontSize(8);
@@ -253,6 +257,19 @@ function setupHistoryDates() {
   $('#historyTo').value = isoDay(until); $('#historyFrom').value = isoDay(from);
 }
 
+async function fetchHistoryPages(base, maxPages = 5, maxResults = 100, status = null) {
+  const flights = []; let cursor = null;
+  for (let page = 0; page < maxPages; page++) {
+    if (status && page > 0) status.textContent = `Suche nach dem letzten verfügbaren Ergebnis … (${(page + 1) * 7} Tage geprüft)`;
+    const response = await fetch('https://adsb.aero/api/v1/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cursor ? { ...base, cursor } : base) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || data.hint || 'Historische Suche fehlgeschlagen');
+    flights.push(...(data.flights || [])); cursor = data.cursor;
+    if (!cursor || flights.length >= maxResults) break;
+  }
+  return flights;
+}
+
 async function searchHistory(event) {
   event.preventDefault();
   const type = $('#historyType').value, query = $('#historyQuery').value.trim().toUpperCase();
@@ -273,21 +290,31 @@ async function searchHistory(event) {
       end_date: end.toISOString(), start_from: `${from}T00:00:00Z`, window_days: 7,
       limit: 50, include_path: false,
     };
-    const flights = []; let cursor = null;
-    for (let page = 0; page < 5; page++) {
-      const response = await fetch('https://adsb.aero/api/v1/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cursor ? { ...base, cursor } : base) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || data.hint || 'Historische Suche fehlgeschlagen');
-      flights.push(...(data.flights || [])); cursor = data.cursor;
-      if (!cursor || flights.length >= 100) break;
-    }
+    const flights = await fetchHistoryPages(base);
     const seen = new Set(flights.map(flight => `${flight.callsign}:${flight.start_ts.slice(0, 10)}`));
     state.historyResults = [...flights, ...fallbacks.filter(flight => !seen.has(`${flight.callsign}:${flight.start_ts.slice(0, 10)}`))].slice(0, 100);
+    state.historyNearest = false;
+    if (!state.historyResults.length) {
+      const known = SCHEDULE_FALLBACKS.filter(flight => {
+        const value = type === 'registration' ? flight.registration : flight.callsign;
+        return value.replaceAll('-', '').startsWith(query.replaceAll('-', ''));
+      });
+      let latest = known.sort((a, b) => new Date(b.start_ts) - new Date(a.start_ts))[0] || null;
+      if (!latest) {
+        try {
+          const recent = await fetchHistoryPages({ match: base.match, window_days: 7, limit: 20, include_path: false }, 26, 1, status);
+          latest = recent.sort((a, b) => new Date(b.start_ts) - new Date(a.start_ts))[0] || null;
+        } catch {}
+      }
+      if (latest) { state.historyResults = [latest]; state.historyNearest = true; }
+    }
     renderHistoryResults();
     const fallbackCount = state.historyResults.filter(flight => flight.scheduled).length;
-    status.textContent = `${state.historyResults.length} Treffer · ${from} bis ${to}${fallbackCount ? ` · ${fallbackCount} Flugplanroute ohne ADS-B-Spur` : ''}`;
+    status.textContent = state.historyNearest
+      ? `Im gewählten Zeitraum kein Treffer. Letztes verfügbares Ergebnis: ${new Date(state.historyResults[0].start_ts).toLocaleDateString('de-AT')}`
+      : `${state.historyResults.length} Treffer · ${from} bis ${to}${fallbackCount ? ` · ${fallbackCount} Flugplanroute ohne ADS-B-Spur` : ''}`;
   } catch (error) {
-    state.historyResults = fallbacks; renderHistoryResults();
+    state.historyResults = fallbacks; state.historyNearest = false; renderHistoryResults();
     status.textContent = fallbacks.length ? `${fallbacks.length} Flugplanroute · ADS-B-Archiv derzeit nicht erreichbar` : error.message;
     showToast(fallbacks.length ? 'Flugplanroute geladen; ADS-B-Archiv nicht erreichbar.' : error.message);
   } finally { button.disabled = false; button.textContent = 'Historische Flüge suchen'; }
@@ -300,7 +327,8 @@ function renderHistoryResults() {
     const start = new Date(flight.start_ts), end = new Date(flight.end_ts);
     const route = `${clean(flight.start_airport_ident, 'Start unbekannt')} → ${clean(flight.end_airport_ident, 'Ziel unbekannt')}`;
     const evidence = flight.scheduled ? `<small class="schedule-note">${escapeHtml(flight.source_label)}</small>` : `<small>${Number(flight.point_count || 0).toLocaleString('de-AT')} Streckenpunkte</small>`;
-    return `<article class="history-result${flight.scheduled ? ' scheduled' : ''}"><div><strong>${escapeHtml(clean(flight.callsign, flight.registration))}</strong><small>${escapeHtml(clean(flight.registration))} · ${escapeHtml(clean(flight.icao24).toUpperCase())}</small></div><div><span>${escapeHtml(clean(flight.model, flight.icao_type))}</span><small>${escapeHtml(route)}</small></div><div><span>${start.toLocaleDateString('de-AT')} · ${start.toLocaleTimeString('de-AT', {hour:'2-digit',minute:'2-digit'})}–${end.toLocaleTimeString('de-AT', {hour:'2-digit',minute:'2-digit'})}</span>${evidence}</div><button data-history-index="${index}">Route öffnen</button></article>`;
+    const nearest = state.historyNearest ? '<small class="nearest-note">LETZTES VERFÜGBARES ERGEBNIS</small>' : '';
+    return `<article class="history-result${flight.scheduled ? ' scheduled' : ''}${state.historyNearest ? ' nearest' : ''}"><div><strong>${escapeHtml(clean(flight.callsign, flight.registration))}</strong><small>${escapeHtml(clean(flight.registration))} · ${escapeHtml(clean(flight.icao24).toUpperCase())}</small>${nearest}</div><div><span>${escapeHtml(clean(flight.model, flight.icao_type))}</span><small>${escapeHtml(route)}</small></div><div><span>${start.toLocaleDateString('de-AT')} · ${start.toLocaleTimeString('de-AT', {hour:'2-digit',minute:'2-digit'})}–${end.toLocaleTimeString('de-AT', {hour:'2-digit',minute:'2-digit'})}</span>${evidence}</div><button data-history-index="${index}">Route öffnen</button></article>`;
   }).join('');
   target.querySelectorAll('[data-history-index]').forEach(button => button.addEventListener('click', () => openHistoricalFlight(state.historyResults[Number(button.dataset.historyIndex)])));
 }
