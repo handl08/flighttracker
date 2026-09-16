@@ -278,6 +278,7 @@ button.secondary {
   color: var(--muted);
   text-align: center;
 }
+.empty-list button { display: block; margin: 14px auto 0; }
 .aircraft {
   width: 100%;
   border: 0;

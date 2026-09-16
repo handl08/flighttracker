@@ -85,7 +85,17 @@ function renderList() {
   const query = els.search.value.trim().toLowerCase();
   const rows = state.aircraft.filter(ac => [ac.flight, ac.r, ac.t, ac.desc, ac.hex].some(v => String(v || '').toLowerCase().includes(query)));
   els.count.textContent = state.aircraft.length;
-  if (!rows.length) { els.list.innerHTML = `<div class="empty-list">${query ? 'Keine passenden Flugzeuge gefunden.' : 'Im gewählten Bereich wurden keine Flugzeuge empfangen.'}</div>`; return; }
+  if (!rows.length) {
+    els.list.innerHTML = query
+      ? `<div class="empty-list">Nicht unter den aktuell sichtbaren Flugzeugen.<button id="searchHistorically" class="secondary">„${escapeHtml(els.search.value.trim())}“ historisch suchen</button></div>`
+      : '<div class="empty-list">Im gewählten Bereich wurden keine Flugzeuge empfangen.</div>';
+    $('#searchHistorically')?.addEventListener('click', () => {
+      $('#historyType').value = 'callsign'; $('#historyQuery').value = els.search.value.trim().toUpperCase();
+      document.querySelector('.history-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      $('#historyForm').requestSubmit();
+    });
+    return;
+  }
   els.list.innerHTML = rows.map(ac => `<button class="aircraft${ac.hex === state.selected ? ' active' : ''}" data-hex="${ac.hex}">
     <span class="aircraft-icon" style="--heading:${Number(ac.track) || 0}deg">✈</span>
     <span class="aircraft-copy"><strong>${escapeHtml(flightName(ac))}</strong><span>${escapeHtml(clean(ac.r))} · ${escapeHtml(modelName(ac))}</span></span>
