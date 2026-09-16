@@ -39,6 +39,29 @@ function knots(value) { return typeof value === 'number' ? `${Math.round(value)}
 function heading(value) { return typeof value === 'number' ? `${Math.round(value)}°` : '–'; }
 function flightName(ac) { return clean(ac.flight, clean(ac.r, ac.hex?.toUpperCase() || 'Unbekannt')); }
 function modelName(ac) { return clean(ac.desc, clean(ac.t, 'Modell unbekannt')); }
+const OPERATOR_BY_ICAO = {
+  AAR: 'Asiana Airlines', AEE: 'Aegean Airlines', AFR: 'Air France', ASL: 'Air Serbia', AUA: 'Austrian Airlines',
+  BAW: 'British Airways', BEL: 'Brussels Airlines', BOX: 'AeroLogic', BTI: 'airBaltic', CCA: 'Air China',
+  CES: 'China Eastern Airlines', CFG: 'Condor', CPA: 'Cathay Pacific', CTN: 'Croatia Airlines', DLH: 'Lufthansa',
+  EWG: 'Eurowings', EZY: 'easyJet', FDX: 'FedEx Express', FIN: 'Finnair',
+  GEC: 'Lufthansa Cargo', GIA: 'Garuda Indonesia', HVN: 'Vietnam Airlines', IBE: 'Iberia', ITY: 'ITA Airways',
+  KAL: 'Korean Air', KLM: 'KLM Royal Dutch Airlines', KQA: 'Kenya Airways', LGL: 'Luxair', LOT: 'LOT Polish Airlines',
+  LZB: 'Bulgaria Air', NJE: 'NetJets Europe', PGT: 'Pegasus Airlines', QTR: 'Qatar Airways', RJA: 'Royal Jordanian',
+  ROT: 'TAROM', RYR: 'Ryanair', SAS: 'Scandinavian Airlines', SEH: 'SKY express', SIA: 'Singapore Airlines',
+  SWR: 'Swiss International Air Lines', SXS: 'SunExpress', TAP: 'TAP Air Portugal', THA: 'Thai Airways',
+  THY: 'Turkish Airlines', TOM: 'TUI Airways', TUI: 'TUI Airways', UPS: 'UPS Airlines', VLG: 'Vueling',
+  WZZ: 'Wizz Air', EXS: 'Jet2.com', TVS: 'Smartwings', UAE: 'Emirates',
+};
+function callsignPrefix(ac) {
+  const callsign = clean(ac.flight, clean(ac.callsign, '')).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return callsign.match(/^([A-Z]{3})/)?.[1] || '';
+}
+function operatorName(ac) {
+  const direct = clean(ac.ownOp, clean(ac.operator, ''));
+  if (direct && direct !== '–') return direct;
+  const prefix = callsignPrefix(ac);
+  return OPERATOR_BY_ICAO[prefix] || (prefix ? `${prefix} · aus Flugnummer erkannt` : 'Betreiber nicht erfasst');
+}
 function showToast(message) { els.toast.textContent = message; els.toast.classList.add('show'); clearTimeout(showToast.timer); showToast.timer = setTimeout(() => els.toast.classList.remove('show'), 2800); }
 
 function markerIcon(ac, selected = false) {
@@ -123,7 +146,7 @@ async function loadProfile(ac) {
 
 async function renderProfile(ac) {
   const box = $('#aircraftProfile'); box.hidden = false;
-  $('#profileOperator').textContent = clean(ac.ownOp, clean(ac.operator, 'Betreiber nicht erfasst'));
+  $('#profileOperator').textContent = operatorName(ac);
   $('#profileFacts').textContent = `${modelName(ac)} · Typ ${clean(ac.t)} · Mode-S ${clean(ac.hex).toUpperCase()}`;
   $('#profileCredit').textContent = 'Öffentliche Flugzeugdaten'; $('#profilePhoto').hidden = true;
   const profile = await loadProfile(ac); if (currentAircraft()?.hex !== ac.hex) return;
@@ -238,9 +261,10 @@ async function exportPdf() {
     pdf.setTextColor(255, 255, 255); pdf.setFontSize(22); pdf.text(flightName(ac), 15, 26);
     pdf.setTextColor(...navy); pdf.setFontSize(13); pdf.text('Flugzeugprofil', 15, 48);
     const fields = [
-      ['Kennzeichen', clean(ac.r)], ['ICAO-Adresse', clean(ac.hex).toUpperCase()],
+      ['Kennzeichen', clean(ac.r)], ['Betreiber', operatorName(ac)],
+      ['ICAO-Adresse', clean(ac.hex).toUpperCase()],
       ['Modell', modelName(ac)], ['Typcode', clean(ac.t)],
-      ['Kategorie', clean(ac.category)], ['Quelle', clean(ac.type)],
+      ['Kategorie', clean(ac.category)],
       ['Letzte Höhe', feet(ac.alt_baro)], ['Geschwindigkeit', knots(ac.gs)],
       ['Kurs', heading(ac.track)], ['Squawk', clean(ac.squawk)],
       ['Erfasste Strecke', `${trackDistance(points).toFixed(2)} km`], ['Aufzeichnungszeit', trackDuration(points)],
