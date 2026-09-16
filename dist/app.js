@@ -193,51 +193,90 @@ function setRadar(lat, lon, radius) {
   loadAircraft(true);
 }
 
-function captureMap() { return new Promise((resolve, reject) => window.leafletImage ? window.leafletImage(map, (error, canvas) => error ? reject(error) : resolve(canvas)) : reject(new Error('Kartenexport nicht geladen'))); }
+function captureLeafletMap(targetMap) { return new Promise((resolve, reject) => window.leafletImage ? window.leafletImage(targetMap, (error, canvas) => error ? reject(error) : resolve(canvas)) : reject(new Error('Kartenexport nicht geladen'))); }
+
+async function captureRouteMap(points) {
+  if (points.length < 2) throw new Error('Noch keine Strecke vorhanden');
+  const host = document.createElement('div');
+  host.style.cssText = 'position:fixed;left:-10000px;top:0;width:900px;height:560px;background:#eef3f5;z-index:-1';
+  document.body.appendChild(host);
+  let exportMap;
+  try {
+    exportMap = L.map(host, { zoomControl: false, attributionControl: false, fadeAnimation: false, zoomAnimation: false });
+    const tiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, crossOrigin: true }).addTo(exportMap);
+    L.polyline(points.map(point => [point.lat, point.lon]), { color: '#0f8ba6', weight: 5, opacity: .95 }).addTo(exportMap);
+    L.circleMarker([points[0].lat, points[0].lon], { radius: 7, color: '#fff', weight: 2, fillColor: '#39bf79', fillOpacity: 1 }).addTo(exportMap);
+    L.circleMarker([points.at(-1).lat, points.at(-1).lon], { radius: 7, color: '#fff', weight: 2, fillColor: '#ff667a', fillOpacity: 1 }).addTo(exportMap);
+    exportMap.fitBounds(L.latLngBounds(points.map(point => [point.lat, point.lon])), { padding: [60, 60], animate: false, maxZoom: 11 });
+    exportMap.invalidateSize(false);
+    await Promise.race([
+      new Promise(resolve => tiles.once('load', resolve)),
+      new Promise(resolve => setTimeout(resolve, 2500)),
+    ]);
+    return await Promise.race([
+      captureLeafletMap(exportMap),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Kartenexport-Zeitlimit')), 6500)),
+    ]);
+  } finally {
+    exportMap?.remove(); host.remove();
+  }
+}
 
 async function exportPdf() {
   const ac = currentAircraft(); if (!ac) return;
+  const button = $('#exportPdf'); button.disabled = true; button.textContent = 'PDF wird erstellt …';
   showToast('PDF-Bericht wird erzeugt …');
-  const points = state.tracks.get(ac.hex) || [];
-  const profile = await loadProfile(ac);
-  const { jsPDF } = window.jspdf;
-  const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
-  const cyan = [15, 139, 166], navy = [7, 18, 25], gray = [95, 112, 122];
-  pdf.setFillColor(...navy); pdf.rect(0, 0, 210, 35, 'F');
-  pdf.setTextColor(110, 231, 255); pdf.setFontSize(11); pdf.text('FLIGHTRACKER · FLIGHT REPORT', 15, 14);
-  pdf.setTextColor(255, 255, 255); pdf.setFontSize(22); pdf.text(flightName(ac), 15, 26);
-  pdf.setTextColor(...navy); pdf.setFontSize(13); pdf.text('Flugzeugprofil', 15, 48);
-  const fields = [
-    ['Kennzeichen', clean(ac.r)], ['ICAO-Adresse', clean(ac.hex).toUpperCase()], ['Modell', modelName(ac)],
-    ['Typcode', clean(ac.t)], ['Kategorie', clean(ac.category)], ['Quelle', clean(ac.type)],
-    ['Letzte Höhe', feet(ac.alt_baro)], ['Geschwindigkeit', knots(ac.gs)], ['Kurs', heading(ac.track)],
-    ['Squawk', clean(ac.squawk)], ['Erfasste Strecke', `${trackDistance(points).toFixed(2)} km`], ['Aufzeichnungszeit', trackDuration(points)],
-  ];
-  fields.forEach(([label, value], index) => {
-    const col = index % 3, row = Math.floor(index / 3), x = 15 + col * 61, y = 58 + row * 17;
-    pdf.setTextColor(...gray); pdf.setFontSize(8); pdf.text(label.toUpperCase(), x, y);
-    pdf.setTextColor(...navy); pdf.setFontSize(10); pdf.text(String(value), x, y + 5);
-  });
-  if (profile?.photo?.data_url) {
-    try { pdf.addImage(profile.photo.data_url, 'JPEG', 143, 42, 52, 34, undefined, 'FAST'); pdf.setTextColor(...gray); pdf.setFontSize(6.5); pdf.text(`Foto: ${profile.photo.photographer} · Planespotters.net`, 143, 79, { maxWidth: 52 }); } catch {}
-  }
-  pdf.setFontSize(13); pdf.setTextColor(...navy); pdf.text('Strecke auf OpenStreetMap', 15, 132);
   try {
-    if (points.length > 1) map.fitBounds(L.latLngBounds(points.map(point => [point.lat, point.lon])), { padding: [40, 40], animate: false });
-    await new Promise(resolve => setTimeout(resolve, 700));
-    const canvas = await Promise.race([
-      captureMap(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Kartenexport-Zeitlimit')), 5000)),
-    ]); pdf.addImage(canvas.toDataURL('image/jpeg', .86), 'JPEG', 15, 140, 180, 112, undefined, 'FAST');
-    pdf.setTextColor(...gray); pdf.setFontSize(7); pdf.text('Kartendaten © OpenStreetMap-Mitwirkende', 15, 256);
-  } catch { drawRoutePdf(pdf, points, 15, 140, 180, 75, cyan, navy); }
-  pdf.setTextColor(...gray); pdf.setFontSize(8);
-  const source = ac.source_label ? 'Flugplandaten / öffentliche Ereignisberichte' : (ac.historical ? 'adsb.aero / adsb.lol' : 'adsb.fi');
-  const license = [state.licensedUser, state.licensedOrg].filter(Boolean).join(' · ');
-  pdf.text(`${license ? `User: ${license} · ` : ''}Provided by factjack.org`, 15, 282);
-  pdf.text(`Erstellt: ${new Date().toLocaleString('de-AT')} · Daten: ${source} · Nicht zur Navigation verwenden`, 15, 287);
-  pdf.save(`Flighttracker-${flightName(ac).replace(/[^a-z0-9_-]+/gi, '-')}-${new Date().toISOString().slice(0, 10)}.pdf`);
-  showToast('PDF-Bericht wurde erstellt.');
+    if (!window.jspdf?.jsPDF) throw new Error('PDF-Modul konnte nicht geladen werden. Bitte Seite neu laden.');
+    const points = state.tracks.get(ac.hex) || [];
+    const profile = await loadProfile(ac);
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
+    const cyan = [15, 139, 166], navy = [7, 18, 25], gray = [95, 112, 122];
+    pdf.setFillColor(...navy); pdf.rect(0, 0, 210, 35, 'F');
+    pdf.setTextColor(110, 231, 255); pdf.setFontSize(11); pdf.text('FLIGHTRACKER · FLIGHT REPORT', 15, 14);
+    pdf.setTextColor(255, 255, 255); pdf.setFontSize(22); pdf.text(flightName(ac), 15, 26);
+    pdf.setTextColor(...navy); pdf.setFontSize(13); pdf.text('Flugzeugprofil', 15, 48);
+    const fields = [
+      ['Kennzeichen', clean(ac.r)], ['ICAO-Adresse', clean(ac.hex).toUpperCase()],
+      ['Modell', modelName(ac)], ['Typcode', clean(ac.t)],
+      ['Kategorie', clean(ac.category)], ['Quelle', clean(ac.type)],
+      ['Letzte Höhe', feet(ac.alt_baro)], ['Geschwindigkeit', knots(ac.gs)],
+      ['Kurs', heading(ac.track)], ['Squawk', clean(ac.squawk)],
+      ['Erfasste Strecke', `${trackDistance(points).toFixed(2)} km`], ['Aufzeichnungszeit', trackDuration(points)],
+    ];
+    fields.forEach(([label, value], index) => {
+      const col = index % 2, row = Math.floor(index / 2), x = 15 + col * 61, y = 58 + row * 13;
+      pdf.setTextColor(...gray); pdf.setFontSize(7.5); pdf.text(label.toUpperCase(), x, y);
+      pdf.setTextColor(...navy); pdf.setFontSize(9.5); pdf.text(pdf.splitTextToSize(String(value), 55)[0], x, y + 4.5);
+    });
+    if (profile?.photo?.data_url) {
+      try {
+        pdf.addImage(profile.photo.data_url, 'JPEG', 143, 49, 52, 34, undefined, 'FAST');
+        pdf.setTextColor(...gray); pdf.setFontSize(6.5);
+        pdf.text(pdf.splitTextToSize(`Foto: ${profile.photo.photographer} · Planespotters.net`, 52), 143, 87);
+      } catch {}
+    } else {
+      pdf.setFillColor(241, 245, 247); pdf.roundedRect(143, 49, 52, 34, 2, 2, 'F');
+      pdf.setTextColor(...gray); pdf.setFontSize(8); pdf.text('Kein Flugzeugfoto verfügbar', 169, 67, { align: 'center', maxWidth: 44 });
+    }
+    pdf.setFontSize(13); pdf.setTextColor(...navy); pdf.text('Strecke', 15, 142);
+    let usedMap = false;
+    try {
+      const canvas = await captureRouteMap(points);
+      pdf.addImage(canvas.toDataURL('image/jpeg', .88), 'JPEG', 15, 149, 180, 96, undefined, 'FAST'); usedMap = true;
+      pdf.setTextColor(...gray); pdf.setFontSize(7); pdf.text('Kartendaten © OpenStreetMap-Mitwirkende', 15, 249);
+    } catch { drawRoutePdf(pdf, points, 15, 149, 180, 82, cyan, navy); }
+    pdf.setTextColor(...gray); pdf.setFontSize(8);
+    const source = ac.source_label ? 'Flugplandaten / öffentliche Ereignisberichte' : (ac.historical ? 'adsb.aero / adsb.lol' : 'adsb.fi + adsb.lol');
+    const license = [state.licensedUser, state.licensedOrg].filter(Boolean).join(' · ');
+    pdf.text(`${license ? `User: ${license} · ` : ''}Provided by factjack.org`, 15, 282);
+    pdf.text(pdf.splitTextToSize(`Erstellt: ${new Date().toLocaleString('de-AT')} · Daten: ${source} · ${usedMap ? 'OpenStreetMap' : 'schematische Strecke'} · Nicht zur Navigation verwenden`, 180), 15, 287);
+    pdf.save(`Flighttracker-${flightName(ac).replace(/[^a-z0-9_-]+/gi, '-')}-${new Date().toISOString().slice(0, 10)}.pdf`);
+    showToast('PDF-Bericht wurde erstellt.');
+  } catch (error) {
+    console.error('PDF export failed', error); showToast(`PDF-Export fehlgeschlagen: ${error.message}`);
+  } finally { button.disabled = false; button.textContent = 'PDF-Bericht exportieren'; }
 }
 
 function drawRoutePdf(pdf, points, x, y, width, height, cyan, navy) {
@@ -250,7 +289,7 @@ function drawRoutePdf(pdf, points, x, y, width, height, cyan, navy) {
   for (let i = 1; i < mapped.length; i++) pdf.line(mapped[i - 1].x, mapped[i - 1].y, mapped[i].x, mapped[i].y);
   pdf.setFillColor(57, 191, 121); pdf.circle(mapped[0].x, mapped[0].y, 2, 'F');
   pdf.setFillColor(255, 102, 122); pdf.circle(mapped.at(-1).x, mapped.at(-1).y, 2, 'F');
-  pdf.setTextColor(...navy); pdf.setFontSize(7); pdf.text('START', mapped[0].x + 3, mapped[0].y + 1); pdf.text('LETZTE POSITION', mapped.at(-1).x + 3, mapped.at(-1).y + 1);
+  pdf.setTextColor(...navy); pdf.setFontSize(7); pdf.text('START', Math.min(x + width - 18, mapped[0].x + 3), mapped[0].y + 1); pdf.text('LETZTE POSITION', Math.max(x + 3, mapped.at(-1).x - 3), mapped.at(-1).y + 1, { align: 'right' });
   pdf.setTextColor(95, 112, 122); pdf.text(`${points[0].lat.toFixed(4)}, ${points[0].lon.toFixed(4)}`, x + 4, y + height - 3);
   pdf.text(`${points.at(-1).lat.toFixed(4)}, ${points.at(-1).lon.toFixed(4)}`, x + width - 47, y + height - 3);
 }
